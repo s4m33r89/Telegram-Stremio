@@ -32,3 +32,7 @@ class Telegram:
     ADMIN_USERNAME = getenv("ADMIN_USERNAME", "fyvio")
     ADMIN_PASSWORD = getenv("ADMIN_PASSWORD", "fyvio")
     
+    SUBSCRIPTION = getenv("SUBSCRIPTION", "false").lower() == "true"
+    SUBSCRIPTION_GROUP_ID = int(getenv("SUBSCRIPTION_GROUP_ID", "0"))
+    SUBSCRIPTION_URL = getenv("SUBSCRIPTION_URL", "https://t.me/")
+    APPROVER_IDS = [int(x.strip()) for x in (getenv("APPROVER_IDS") or "").split(",") if x.strip().isdigit()]

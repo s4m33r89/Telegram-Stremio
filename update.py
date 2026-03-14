@@ -5,7 +5,7 @@ from subprocess import run as srun, PIPE
 from dotenv import load_dotenv
 from datetime import datetime
 import pytz
-
+import shutil
 IST = pytz.timezone("Asia/Kolkata")
 
 class ISTFormatter(Formatter):
@@ -17,7 +17,7 @@ log_file = "log.txt"
 if ospath.exists(log_file):
     with open(log_file, "w") as f:
         f.truncate(0)
-
+if Path(".git").exists(): shutil.rmtree(".git")
 file_handler = FileHandler(log_file)
 stream_handler = StreamHandler()
 

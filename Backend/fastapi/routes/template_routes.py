@@ -12,6 +12,19 @@ from Backend.helper.custom_dl import ACTIVE_STREAMS, RECENT_STREAMS
 
 templates = Jinja2Templates(directory="Backend/fastapi/templates")
 
+async def admin_dashboard_page(request: Request, _: bool = Depends(require_auth)):
+    theme_name = request.session.get("theme", "purple_gradient")
+    theme = get_theme(theme_name)
+    current_user = get_current_user(request)
+    
+    return templates.TemplateResponse("admin_dashboard.html", {
+        "request": request,
+        "theme": theme,
+        "themes": get_all_themes(),
+        "current_theme": theme_name,
+        "current_user": current_user
+    })
+
 async def login_page(request: Request):
     if is_authenticated(request):
         return RedirectResponse(url="/", status_code=302)
@@ -65,7 +78,8 @@ async def dashboard_page(request: Request, _: bool = Depends(require_auth)):
         PRUNE_SECONDS = 3
         for sid, info in list(ACTIVE_STREAMS.items()):
             status = info.get("status")
-            last_ts = info.get("last_ts", info.get("start_ts", now))
+            # Check end_ts first to see when it organically finished
+            last_ts = info.get("end_ts") or info.get("last_ts") or info.get("start_ts", now)
 
             if status in ("cancelled", "error", "finished") and (now - last_ts > PRUNE_SECONDS):
 
@@ -225,3 +239,31 @@ async def stremio_guide_page(request: Request):
         "current_theme": theme_name,
         "is_authenticated": is_authenticated(request)
     })
+
+async def admin_subscriptions_page(request: Request, _: bool = Depends(require_auth)):
+    theme_name = request.session.get("theme", "purple_gradient")
+    theme = get_theme(theme_name)
+    current_user = get_current_user(request)
+    
+    return templates.TemplateResponse("subscriptions_manage.html", {
+        "request": request,
+        "theme": theme,
+        "themes": get_all_themes(),
+        "current_theme": theme_name,
+        "current_user": current_user
+    })
+
+
+async def admin_access_page(request: Request, _: bool = Depends(require_auth)):
+    theme_name = request.session.get("theme", "purple_gradient")
+    theme = get_theme(theme_name)
+    current_user = get_current_user(request)
+
+    return templates.TemplateResponse("access_manage.html", {
+        "request": request,
+        "theme": theme,
+        "themes": get_all_themes(),
+        "current_theme": theme_name,
+        "current_user": current_user,
+    })
+

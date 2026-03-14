@@ -9,7 +9,7 @@
         <h1 class="text-3xl font-bold">System Status</h1>
         <p class="theme-text-secondary mt-2">Current status of Telegram Stremio services</p>
     </div>
-    
+
     <!-- Status Cards -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div class="theme-card p-6 rounded-lg shadow text-center">
@@ -19,7 +19,7 @@
             <h3 class="text-lg font-semibold mb-2">Backend Status</h3>
             <p class="text-green-600 font-medium">{{ stats.status|title }}</p>
         </div>
-        
+
         <div class="theme-card p-6 rounded-lg shadow text-center">
             <div class="w-16 h-16 mx-auto mb-4 bg-blue-500 rounded-full flex items-center justify-center">
                 <span class="text-white text-2xl">↑</span>
@@ -27,7 +27,7 @@
             <h3 class="text-lg font-semibold mb-2">Uptime</h3>
             <p class="text-green-600 font-medium">{{ stats.uptime }}</p>
         </div>
-        
+
         <div class="theme-card p-6 rounded-lg shadow text-center">
             <div class="w-16 h-16 mx-auto mb-4 bg-purple-500 rounded-full flex items-center justify-center">
                 <span class="text-white text-2xl">v</span>
@@ -36,7 +36,7 @@
             <p class="theme-text-secondary font-medium">{{ stats.version }}</p>
         </div>
     </div>
-    
+
     <!-- Services Status -->
     <div class="theme-card p-6 rounded-lg shadow mb-8">
         <h2 class="text-xl font-semibold mb-4">Service Status</h2>
@@ -55,13 +55,14 @@
             </div>
         </div>
     </div>
-    
+
     {% if not is_authenticated %}
     <!-- Admin Access -->
     <div class="theme-card p-6 rounded-lg shadow text-center">
         <h2 class="text-xl font-semibold mb-4">Administrator Access</h2>
         <p class="theme-text-secondary mb-4">Login to access the full admin dashboard</p>
-        <a href="/login" class="theme-primary text-white px-6 py-3 rounded-md hover:opacity-90 transition-opacity inline-block">
+        <a href="/login"
+            class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-md transition-colors inline-block shadow-sm">
             Admin Login
         </a>
     </div>

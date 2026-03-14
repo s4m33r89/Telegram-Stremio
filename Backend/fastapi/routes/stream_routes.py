@@ -12,8 +12,8 @@ from collections import deque
 from Backend import db
 from Backend.helper.encrypt import decode_string
 from Backend.helper.exceptions import InvalidHash
-from Backend.helper.custom_dl import ByteStreamer, ACTIVE_STREAMS, RECENT_STREAMS
-from Backend.pyrofork.bot import StreamBot, work_loads, multi_clients, client_dc_map
+from Backend.helper.custom_dl import ByteStreamer, ACTIVE_STREAMS, RECENT_STREAMS, get_adaptive_chunk_size
+from Backend.pyrofork.bot import StreamBot, work_loads, multi_clients, client_dc_map, client_failures, client_avg_mbps
 from Backend.config import Telegram
 from Backend.logger import LOGGER
 from Backend.fastapi.security.tokens import verify_token
@@ -39,14 +39,32 @@ def make_json_safe(obj):
 
 
 def parse_range_header(range_header: str, file_size: int):
+    """
+    Parse HTTP Range header.
+
+    Supports:
+    bytes=1000-2000
+    bytes=1000-
+    bytes=-2000
+    """
     if not range_header:
         return 0, file_size - 1
 
     try:
-        value = range_header.replace("bytes=", "")
+        value = range_header.replace("bytes=", "").strip()
         start_str, end_str = value.split("-")
-        start = int(start_str)
-        end = int(end_str) if end_str else file_size - 1
+
+        if start_str == "":
+            length = int(end_str)
+            start = file_size - length
+            end = file_size - 1
+        elif end_str == "":
+            start = int(start_str)
+            end = file_size - 1
+        else:
+            start = int(start_str)
+            end = int(end_str)
+
     except Exception:
         raise HTTPException(
             status_code=416,
@@ -54,7 +72,13 @@ def parse_range_header(range_header: str, file_size: int):
             headers={"Content-Range": f"bytes */{file_size}"},
         )
 
-    if start < 0 or end >= file_size or end < start:
+    if start < 0:
+        start = 0
+
+    if end >= file_size:
+        end = file_size - 1
+
+    if end < start:
         raise HTTPException(
             status_code=416,
             detail="Requested Range Not Satisfiable",
@@ -65,31 +89,53 @@ def parse_range_header(range_header: str, file_size: int):
 
 
 def select_best_client(target_dc: int) -> int:
-    matching_dc_clients = []
-    for client_idx, client_dc in client_dc_map.items():
-        if client_dc == target_dc and client_idx in multi_clients:
-            matching_dc_clients.append((client_idx, work_loads.get(client_idx, 0)))
+    """Pick the best available client.
 
+    Score = work_loads + 3 × client_failures
+    Failures are weighted 3× so a bot that has been timing out / erroring
+    is deprioritised even if its current workload is low.
+    DC-aware selection is kept but currently commented out (uncomment to
+    prefer same-DC bots).
+    """
+    def _score(idx: int) -> int:
+        return work_loads.get(idx, 0) + 3 * client_failures.get(idx, 0)
 
-    # # -------------Don't use part of code at now ----------------------------
-    # if matching_dc_clients:
-    #     selected = min(matching_dc_clients, key=lambda x: x[1])[0]
-    #     LOGGER.info(
-    #         f"Selected client {selected} (DC {target_dc} match) with workload {work_loads[selected]}"
-    #     )
+    # --- DC-aware selection (uncomment to enable) ---------------------------
+    # matching = [
+    #     idx for idx, dc in client_dc_map.items()
+    #     if dc == target_dc and idx in multi_clients
+    # ]
+    # if matching:
+    #     selected = min(matching, key=_score)
+    #     LOGGER.debug("DC-match client %s (DC %s) score=%s", selected, target_dc, _score(selected))
     #     return selected
-    # # -------------------------------------------------------------------------
+    # ------------------------------------------------------------------------
 
     if multi_clients:
-        selected = min(work_loads, key=work_loads.get)
-        selected_dc = client_dc_map.get(selected, "unknown")
+        selected = min(multi_clients.keys(), key=_score)
         LOGGER.debug(
-            f"No DC {target_dc} client available. "
-            f"Using client {selected} (DC {selected_dc}) with workload {work_loads[selected]}"
+            "Selected client %s (DC %s) score=%s",
+            selected, client_dc_map.get(selected, "?"), _score(selected),
         )
         return selected
 
     return 0
+
+
+async def decay_client_failures() -> None:
+    """Every 5 minutes reduce each client's failure count by 1 (floor 0).
+
+    This lets bots self-recover after a temporary DC issue without manual
+    intervention.  The coroutine is started once as a background task on
+    first import.
+    """
+    while True:
+        await asyncio.sleep(300)  # 5 minutes
+        for k in list(client_failures):
+            if client_failures.get(k, 0) > 0:
+                client_failures[k] = max(0, client_failures[k] - 1)
+                LOGGER.debug("Failure decay: client %s failures → %s", k, client_failures[k])
+
 
 
 async def track_usage_from_stats(stream_id: str, token: str, token_data: dict):
@@ -186,6 +232,7 @@ async def stream_handler(
         secure_hash=secure_hash,
         token=token,
         token_data=token_data,
+        stream_id_hash=id,
     )
 
 async def media_streamer(
@@ -195,10 +242,12 @@ async def media_streamer(
     secure_hash: str,
     token: str,
     token_data: dict = None,
+    stream_id_hash: str = None,
 ):
-    temp_client = multi_clients[min(work_loads, key=work_loads.get)]
+    temp_client = multi_clients[min(multi_clients.keys(), key=lambda i: work_loads.get(i, 0) + 3 * client_failures.get(i, 0))]
     if temp_client not in _streamer_by_client:
-        _streamer_by_client[temp_client] = ByteStreamer(temp_client)
+        idx = next((i for i, c in multi_clients.items() if c is temp_client), -1)
+        _streamer_by_client[temp_client] = ByteStreamer(temp_client, idx)
     temp_streamer = _streamer_by_client[temp_client]
 
     file_id = await temp_streamer.get_file_properties(chat_id=chat_id, message_id=msg_id)
@@ -214,7 +263,7 @@ async def media_streamer(
     tg_client = multi_clients[index]
 
     if tg_client not in _streamer_by_client:
-        _streamer_by_client[tg_client] = ByteStreamer(tg_client)
+        _streamer_by_client[tg_client] = ByteStreamer(tg_client, index)
     streamer: ByteStreamer = _streamer_by_client[tg_client]
 
     file_size = file_id.file_size
@@ -222,16 +271,33 @@ async def media_streamer(
     start, end = parse_range_header(range_header, file_size)
     req_length = end - start + 1
 
-    chunk_size = streamer.CHUNK_SIZE
+    # Adaptive chunk size based on this client's recent measured throughput
+    chunk_size = get_adaptive_chunk_size(index)
     offset = start - (start % chunk_size)
     first_part_cut = start - offset
     last_part_cut = (end % chunk_size) + 1
     part_count = math.ceil(end / chunk_size) - math.floor(offset / chunk_size)
 
+    from urllib.parse import unquote
+    
     stream_id = secrets.token_hex(8)
+    
+    # Extract original title from the URL path name, fallback to raw name
+    decoded_name = unquote(request.path_params.get("name", ""))
+    
+    # Look up the real title from the database using the Stremio stream_id_hash
+    db_title = None
+    if stream_id_hash:
+        db_title = await db.get_title_by_stream_id(stream_id_hash)
+        LOGGER.info(f"Stream lookup for hash '{stream_id_hash}' returned title: {db_title}")
+        
+    final_title = db_title if db_title else decoded_name
+    
     meta = {
         "request_path": str(request.url.path),
         "client_host": request.client.host if request.client else None,
+        "title": final_title,
+        "user_name": token_data.get("name", "Unknown") if token_data else "Unknown"
     }
 
     prefetch_count = Telegram.PARALLEL
@@ -260,15 +326,46 @@ async def media_streamer(
     if "." not in file_name and "/" in mime_type:
         file_name = f"{file_name}.{mime_type.split('/')[1]}"
 
+    # HEAD: return headers only (no body), include Content-Length so the
+    # client knows the file size without opening a stream.
+    # GET: do NOT set Content-Length on the StreamingResponse.
+    # If a Telegram chunk fetch times out mid-stream the generator exits early,
+    # delivering fewer bytes than the declared length.  h11 enforces
+    # Content-Length strictly and raises LocalProtocolError in that case.
+    # Without Content-Length, uvicorn uses chunked transfer encoding which
+    # handles early termination gracefully.  Stremio / media players
+    # are fine with chunked 206 responses.
+
+    # HEAD request support
+    from fastapi.responses import Response as PlainResponse
+
+    if request.method == "HEAD":
+        headers = {
+            "Content-Type": mime_type,
+            "Content-Length": str(req_length),
+            "Content-Disposition": f'inline; filename="{file_name}"',
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=3600",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
+        }
+
+        if range_header:
+            headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+
+        return PlainResponse(
+            status_code=206 if range_header else 200,
+            headers=headers,
+        )
+
     headers = {
         "Content-Type": mime_type,
-        "Content-Length": str(req_length),
         "Content-Disposition": f'inline; filename="{file_name}"',
         "Accept-Ranges": "bytes",
-        "Cache-Control": "public, max-age=3600, immutable",
+        "Content-Length": str(req_length),
+        "Cache-Control": "public, max-age=3600",
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
-        "X-Stream-Id": stream_id,
     }
 
     if range_header:
@@ -276,12 +373,14 @@ async def media_streamer(
         status = 206
     else:
         status = 200
+
     return StreamingResponse(
-        content=body_gen,
+        body_gen,
         headers=headers,
         status_code=status,
         media_type=mime_type,
     )
+
 
 @router.get("/stream/stats")
 async def get_stream_stats():
@@ -290,7 +389,8 @@ async def get_stream_stats():
 
     for sid, info in list(ACTIVE_STREAMS.items()):
         status = info.get("status")
-        last_ts = info.get("last_ts", info.get("start_ts", now))
+        # Check end_ts first, which is set when a stream organically finishes
+        last_ts = info.get("end_ts") or info.get("last_ts") or info.get("start_ts", now)
         if status in ("cancelled", "error", "finished"):
             if now - last_ts > PRUNE_SECONDS:
                 try:
@@ -305,6 +405,7 @@ async def get_stream_stats():
                 "stream_id": sid,
                 "msg_id": info.get("msg_id"),
                 "chat_id": info.get("chat_id"),
+                "title": info.get("meta", {}).get("title"),
                 "client_index": info.get("client_index"),
                 "dc_id": info.get("dc_id"),
                 "status": info.get("status"),
@@ -323,6 +424,7 @@ async def get_stream_stats():
                 "stream_id": info.get("stream_id"),
                 "msg_id": info.get("msg_id"),
                 "chat_id": info.get("chat_id"),
+                "title": info.get("meta", {}).get("title"),
                 "client_index": info.get("client_index"),
                 "dc_id": info.get("dc_id"),
                 "status": info.get("status"),
