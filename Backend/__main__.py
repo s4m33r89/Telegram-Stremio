@@ -91,3 +91,6 @@ if __name__ == '__main__':
         loop.run_until_complete(stop_services())
         loop.stop()
         logging.shutdown()  
+# Load persisted AUTH_CHANNELs from DB (merged with env var channels)
+        from Backend.pyrofork.plugins.channels import _load_channels_from_db
+        await _load_channels_from_db()
