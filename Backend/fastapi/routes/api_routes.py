@@ -3,6 +3,7 @@ import json
 from fastapi import Request, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from Backend import db, StartTime, __version__
+from Backend.logger import LOGGER
 from Backend.helper.pyro import get_readable_time
 from Backend.pyrofork.bot import multi_clients, StreamBot
 from Backend.helper.custom_dl import run_speed_test, _speed_test_single_client
@@ -468,6 +469,18 @@ async def get_stream_analytics_api() -> dict:
     except Exception as e:
         from Backend.logger import LOGGER
         LOGGER.error(f"Stream analytics API error: {e}")
+        return {"status": "error", "message": str(e)}
+
+async def clear_stream_analytics_api() -> dict:
+    try:
+        result = await db.dbs["tracking"]["stream_analytics"].delete_many({})
+        LOGGER.info(f"Admin cleared stream analytics ({result.deleted_count} records deleted).")
+
+        return {
+            "status": "success",
+            "message": f"{result.deleted_count} analytics records cleared."
+        }
+    except Exception as e:
         return {"status": "error", "message": str(e)}
 
 # ---------------------------------------------------------------------------

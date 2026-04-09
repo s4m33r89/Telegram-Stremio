@@ -8,8 +8,6 @@ Commands (owner-only, private chat):
     /dbcheck purge          — Find and delete orphaned entries
     /exportchannels         — Export AUTH_CHANNEL list as JSON
     /importchannels <json>  — Import channels from JSON
-
-Drop this file into  Backend/pyrofork/plugins/utilities.py
 """
 
 import asyncio
@@ -18,6 +16,7 @@ import time
 from pyrogram import filters, Client, enums
 from pyrogram.types import Message
 from pyrogram.errors import FloodWait
+from pymongo.errors import CursorNotFound
 
 from Backend.helper.custom_filter import CustomFilters
 from Backend.logger import LOGGER
@@ -25,6 +24,10 @@ from Backend import db, StartTime, __version__
 from Backend.config import Telegram
 from Backend.helper.encrypt import decode_string
 
+
+CONCURRENT_TASKS = 10
+BATCH_SIZE = 100
+PROGRESS_UPDATE_EVERY = 50
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  /stats — Quick dashboard
@@ -223,22 +226,50 @@ async def search_command(client: Client, message: Message):
     )
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  /dbcheck — Integrity checker (find orphaned streams)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Check single Telegram message
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def check_message(client, stream_hash):
+    try:
+        decoded = await decode_string(stream_hash)
+        chat_id = int(f"-100{decoded['chat_id']}")
+        msg_id = int(decoded['msg_id'])
+
+        msg = await client.get_messages(chat_id, msg_id)
+
+        if msg.empty:
+            return False
+        return True
+
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        return await check_message(client, stream_hash)
+
+    except Exception:
+        return None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Batch processor
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async def process_batch(client, batch):
+    tasks = [check_message(client, s) for s in batch]
+    return await asyncio.gather(*tasks, return_exceptions=True)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# /dbcheck — Integrity checker (find orphaned streams)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 @Client.on_message(filters.command('dbcheck') & filters.private & CustomFilters.owner, group=10)
 async def dbcheck_command(client: Client, message: Message):
-    """Check for orphaned DB entries where the Telegram message no longer exists."""
+
     args = message.text.split()
     purge_mode = len(args) > 1 and args[1].lower() == "purge"
 
-    mode_label = "🗑 Purge" if purge_mode else "🔍 Check"
     status_msg = await message.reply_text(
-        f"<blockquote>{mode_label} mode — scanning all stream entries…</blockquote>\n\n"
-        f"This may take a while for large databases.",
-        quote=True,
-        parse_mode=enums.ParseMode.HTML,
+        "🚀 DB Check started (Atlas-safe mode)...",
+        quote=True
     )
 
     checked = 0
@@ -246,143 +277,157 @@ async def dbcheck_command(client: Client, message: Message):
     alive = 0
     errors = 0
     purged = 0
-    dead_entries = []  # list of (collection, doc_id, stream_hash, title)
+
+    dead_entries = []
+
+    start_time = time.time()
 
     try:
         for i in range(1, db.current_db_index + 1):
             storage = db.dbs.get(f"storage_{i}")
+
             if storage is None:
                 continue
 
-            # Check movies
-            async for movie in storage["movie"].find({}):
-                title = movie.get("title", "Unknown")
-                for q in movie.get("telegram", []):
-                    stream_hash = q.get("id")
-                    if not stream_hash:
-                        continue
-                    try:
-                        decoded = await decode_string(stream_hash)
-                        chat_id = int(f"-100{decoded['chat_id']}")
-                        msg_id = int(decoded['msg_id'])
-                        msg = await client.get_messages(chat_id, msg_id)
-                        checked += 1
-                        if msg.empty:
-                            dead += 1
-                            dead_entries.append(("movie", stream_hash, title, q.get("quality", "?")))
-                        else:
-                            alive += 1
-                    except FloodWait as e:
-                        await asyncio.sleep(e.value)
-                    except Exception as e:
-                        errors += 1
-                        LOGGER.warning(f"[DBCheck] Error checking {stream_hash}: {e}")
+            # ───────── MOVIES (PAGINATION) ─────────
+            last_id = None
 
-                    # Rate limit
-                    await asyncio.sleep(0.3)
+            while True:
+                query = {"_id": {"$gt": last_id}} if last_id else {}
 
-                    # Progress update every 25 checks
-                    if checked % 25 == 0:
-                        try:
-                            await status_msg.edit_text(
-                                f"<blockquote>{mode_label} — in progress…</blockquote>\n\n"
-                                f"Checked: <code>{checked}</code> | "
-                                f"Dead: <code>{dead}</code> | "
-                                f"Alive: <code>{alive}</code> | "
-                                f"Errors: <code>{errors}</code>",
-                                parse_mode=enums.ParseMode.HTML,
-                            )
-                        except Exception:
-                            pass
+                docs = await storage["movie"] \
+                    .find(query) \
+                    .sort("_id", 1) \
+                    .limit(BATCH_SIZE) \
+                    .to_list(length=BATCH_SIZE)
 
-            # Check TV shows
-            async for show in storage["tv"].find({}):
-                title = show.get("title", "Unknown")
-                for season in show.get("seasons", []):
-                    for episode in season.get("episodes", []):
-                        for q in episode.get("telegram", []):
-                            stream_hash = q.get("id")
-                            if not stream_hash:
-                                continue
-                            try:
-                                decoded = await decode_string(stream_hash)
-                                chat_id = int(f"-100{decoded['chat_id']}")
-                                msg_id = int(decoded['msg_id'])
-                                msg = await client.get_messages(chat_id, msg_id)
-                                checked += 1
-                                if msg.empty:
-                                    dead += 1
-                                    ep_label = f"S{season.get('season_number','?')}E{episode.get('episode_number','?')}"
-                                    dead_entries.append(("tv", stream_hash, f"{title} {ep_label}", q.get("quality", "?")))
-                                else:
-                                    alive += 1
-                            except FloodWait as e:
-                                await asyncio.sleep(e.value)
-                            except Exception as e:
+                if not docs:
+                    break
+
+                for movie in docs:
+                    last_id = movie["_id"]
+                    title = movie.get("title", "Unknown")
+
+                    stream_ids = [
+                        q.get("id") for q in movie.get("telegram", [])
+                        if q.get("id")
+                    ]
+
+                    for x in range(0, len(stream_ids), CONCURRENT_TASKS):
+                        batch = stream_ids[x:x + CONCURRENT_TASKS]
+                        results = await process_batch(client, batch)
+
+                        for stream_hash, result in zip(batch, results):
+                            checked += 1
+
+                            if result is True:
+                                alive += 1
+                            elif result is False:
+                                dead += 1
+                                dead_entries.append(stream_hash)
+                            else:
                                 errors += 1
 
-                            await asyncio.sleep(0.3)
+                        if checked % PROGRESS_UPDATE_EVERY == 0:
+                            elapsed = int(time.time() - start_time)
+                            speed = checked // max(1, elapsed)
 
-                            if checked % 25 == 0:
-                                try:
-                                    await status_msg.edit_text(
-                                        f"<blockquote>{mode_label} — in progress…</blockquote>\n\n"
-                                        f"Checked: <code>{checked}</code> | "
-                                        f"Dead: <code>{dead}</code> | "
-                                        f"Alive: <code>{alive}</code> | "
-                                        f"Errors: <code>{errors}</code>",
-                                        parse_mode=enums.ParseMode.HTML,
-                                    )
-                                except Exception:
-                                    pass
+                            await status_msg.edit_text(
+                                f"🚀 DB Check Running...\n\n"
+                                f"Checked: {checked}\n"
+                                f"Alive: {alive}\n"
+                                f"Dead: {dead}\n"
+                                f"Errors: {errors}\n\n"
+                                f"⚡ Speed: {speed}/sec"
+                            )
 
-        # Purge dead entries if requested
+            # ───────── TV (PAGINATION) ─────────
+            last_id = None
+
+            while True:
+                query = {"_id": {"$gt": last_id}} if last_id else {}
+
+                docs = await storage["tv"] \
+                    .find(query) \
+                    .sort("_id", 1) \
+                    .limit(BATCH_SIZE) \
+                    .to_list(length=BATCH_SIZE)
+
+                if not docs:
+                    break
+
+                for show in docs:
+                    last_id = show["_id"]
+
+                    stream_ids = []
+
+                    for season in show.get("seasons", []):
+                        for episode in season.get("episodes", []):
+                            for q in episode.get("telegram", []):
+                                if q.get("id"):
+                                    stream_ids.append(q["id"])
+
+                    for x in range(0, len(stream_ids), CONCURRENT_TASKS):
+                        batch = stream_ids[x:x + CONCURRENT_TASKS]
+                        results = await process_batch(client, batch)
+
+                        for stream_hash, result in zip(batch, results):
+                            checked += 1
+
+                            if result is True:
+                                alive += 1
+                            elif result is False:
+                                dead += 1
+                                dead_entries.append(stream_hash)
+                            else:
+                                errors += 1
+
+                        if checked % PROGRESS_UPDATE_EVERY == 0:
+                            elapsed = int(time.time() - start_time)
+                            speed = checked // max(1, elapsed)
+
+                            await status_msg.edit_text(
+                                f"🚀 DB Check Running...\n\n"
+                                f"Checked: {checked}\n"
+                                f"Alive: {alive}\n"
+                                f"Dead: {dead}\n"
+                                f"Errors: {errors}\n\n"
+                                f"⚡ Speed: {speed}/sec"
+                            )
+
+        # ───────── PURGE ─────────
         if purge_mode and dead_entries:
-            for _, stream_hash, _, _ in dead_entries:
-                try:
-                    deleted = await db.delete_media_by_stream_id(stream_hash)
-                    if deleted:
-                        purged += 1
-                except Exception as e:
-                    LOGGER.error(f"[DBCheck] Purge failed for {stream_hash}: {e}")
+            purge_tasks = []
 
-        # Final summary
-        summary = (
-            f"<blockquote>{'🗑' if purge_mode else '🔍'} <b>DB Integrity Check Complete</b></blockquote>\n\n"
-            f"✅ Alive: <code>{alive}</code>\n"
-            f"💀 Dead (orphaned): <code>{dead}</code>\n"
-            f"❌ Errors: <code>{errors}</code>\n"
-            f"📁 Total checked: <code>{checked}</code>\n"
+            for stream_hash in dead_entries:
+                purge_tasks.append(db.delete_media_by_stream_id(stream_hash))
+
+                if len(purge_tasks) >= CONCURRENT_TASKS:
+                    results = await asyncio.gather(*purge_tasks, return_exceptions=True)
+                    purged += sum(1 for r in results if r)
+                    purge_tasks = []
+
+            if purge_tasks:
+                results = await asyncio.gather(*purge_tasks, return_exceptions=True)
+                purged += sum(1 for r in results if r)
+
+        # ───────── FINAL RESULT ─────────
+        elapsed = int(time.time() - start_time)
+
+        await status_msg.edit_text(
+            f"✅ DB CHECK COMPLETE\n\n"
+            f"Checked: {checked}\n"
+            f"Alive: {alive}\n"
+            f"Dead: {dead}\n"
+            f"Errors: {errors}\n\n"
+            f"🗑 Purged: {purged}\n"
+            f"⏱ Time: {elapsed}s\n"
+            f"⚡ Avg Speed: {checked // max(1, elapsed)}/sec"
         )
-
-        if purge_mode:
-            summary += f"\n🗑 Purged: <code>{purged}</code> / {dead}"
-        elif dead > 0:
-            summary += f"\n💡 Run <code>/dbcheck purge</code> to clean up the {dead} dead entries."
-
-        # Show sample of dead entries (first 10)
-        if dead_entries and not purge_mode:
-            summary += "\n\n<b>Sample dead entries:</b>\n"
-            for _, _, title, quality in dead_entries[:10]:
-                summary += f"  • {title} [{quality}]\n"
-            if len(dead_entries) > 10:
-                summary += f"  <i>…and {len(dead_entries) - 10} more</i>"
-
-        await status_msg.edit_text(summary, parse_mode=enums.ParseMode.HTML)
-
-        # Send a separate notification so the user gets a ping
-        if checked > 50:
-            await message.reply_text(
-                f"✅ DB check finished — {dead} dead entries found out of {checked} checked.",
-                parse_mode=enums.ParseMode.HTML,
-            )
 
     except Exception as e:
         LOGGER.error(f"[DBCheck] Error: {e}")
-        await status_msg.edit_text(
-            f"❌ DB check failed: <code>{e}</code>",
-            parse_mode=enums.ParseMode.HTML,
-        )
+        await status_msg.edit_text(f"❌ DB check failed: {e}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

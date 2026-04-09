@@ -13,7 +13,7 @@ from Backend.helper.custom_dl import ACTIVE_STREAMS, RECENT_STREAMS
 templates = Jinja2Templates(directory="Backend/fastapi/templates")
 
 async def admin_dashboard_page(request: Request, _: bool = Depends(require_auth)):
-    theme_name = request.session.get("theme", "purple_gradient")
+    theme_name = request.session.get("theme", "dark_professional")
     theme = get_theme(theme_name)
     current_user = get_current_user(request)
     
@@ -29,7 +29,7 @@ async def login_page(request: Request):
     if is_authenticated(request):
         return RedirectResponse(url="/", status_code=302)
     
-    theme_name = request.session.get("theme", "purple_gradient")
+    theme_name = request.session.get("theme", "dark_professional")
     theme = get_theme(theme_name)
     
     return templates.TemplateResponse("login.html", {
@@ -45,7 +45,7 @@ async def login_post(request: Request, username: str = Form(...), password: str 
         request.session["username"] = username
         return RedirectResponse(url="/", status_code=302)
     else:
-        theme_name = request.session.get("theme", "purple_gradient")
+        theme_name = request.session.get("theme", "dark_professional")
         theme = get_theme(theme_name)
         return templates.TemplateResponse("login.html", {
             "request": request,
@@ -65,7 +65,7 @@ async def set_theme(request: Request, theme: str = Form(...)):
     return RedirectResponse(url=request.headers.get("referer", "/"), status_code=302)
 
 async def dashboard_page(request: Request, _: bool = Depends(require_auth)):
-    theme_name = request.session.get("theme", "purple_gradient")
+    theme_name = request.session.get("theme", "dark_professional")
     theme = get_theme(theme_name)
     current_user = get_current_user(request)
     
@@ -159,7 +159,7 @@ async def dashboard_page(request: Request, _: bool = Depends(require_auth)):
 
 
 async def media_management_page(request: Request, media_type: str = "movie", _: bool = Depends(require_auth)):
-    theme_name = request.session.get("theme", "purple_gradient")
+    theme_name = request.session.get("theme", "dark_professional")
     theme = get_theme(theme_name)
     current_user = get_current_user(request)
     
@@ -173,7 +173,7 @@ async def media_management_page(request: Request, media_type: str = "movie", _: 
     })
 
 async def edit_media_page(request: Request, tmdb_id: int, db_index: int, media_type: str, _: bool = Depends(require_auth)):
-    theme_name = request.session.get("theme", "purple_gradient")
+    theme_name = request.session.get("theme", "dark_professional")
     theme = get_theme(theme_name)
     current_user = get_current_user(request)
     
@@ -197,7 +197,7 @@ async def edit_media_page(request: Request, tmdb_id: int, db_index: int, media_t
     })
 
 async def public_status_page(request: Request):
-    theme_name = request.session.get("theme", "purple_gradient")
+    theme_name = request.session.get("theme", "dark_professional")
     theme = get_theme(theme_name)
     
     try:
@@ -229,7 +229,7 @@ async def public_status_page(request: Request):
     })
 
 async def stremio_guide_page(request: Request):
-    theme_name = request.session.get("theme", "purple_gradient")
+    theme_name = request.session.get("theme", "dark_professional")
     theme = get_theme(theme_name)
     
     return templates.TemplateResponse("stremio_guide.html", {
@@ -241,7 +241,7 @@ async def stremio_guide_page(request: Request):
     })
 
 async def admin_subscriptions_page(request: Request, _: bool = Depends(require_auth)):
-    theme_name = request.session.get("theme", "purple_gradient")
+    theme_name = request.session.get("theme", "dark_professional")
     theme = get_theme(theme_name)
     current_user = get_current_user(request)
     
@@ -255,7 +255,7 @@ async def admin_subscriptions_page(request: Request, _: bool = Depends(require_a
 
 
 async def admin_access_page(request: Request, _: bool = Depends(require_auth)):
-    theme_name = request.session.get("theme", "purple_gradient")
+    theme_name = request.session.get("theme", "dark_professional")
     theme = get_theme(theme_name)
     current_user = get_current_user(request)
 

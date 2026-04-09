@@ -19,7 +19,7 @@ from Backend.fastapi.routes.api_routes import (
     create_token_api, revoke_token_api, update_token_limits_api,
     speed_test_api, speed_test_stream_api,
     get_admin_stats_api, clear_cache_api, get_dead_links_api,
-    get_stream_analytics_api,
+    get_stream_analytics_api, clear_stream_analytics_api,
     get_subscription_plans_api, add_subscription_plan_api,
     update_subscription_plan_api, delete_subscription_plan_api,
     get_all_subscribers_api, manage_subscriber_api,
@@ -179,6 +179,10 @@ async def get_dead_links(_: bool = Depends(require_auth)):
 @app.get("/api/admin/stream-analytics")
 async def get_stream_analytics(_: bool = Depends(require_auth)):
     return await get_stream_analytics_api()
+
+@app.post("/api/admin/clear-analytics")
+async def clear_analytics(_: bool = Depends(require_auth)):
+    return await clear_stream_analytics_api()
 
 @app.get("/admin/subscriptions", response_class=HTMLResponse)
 async def admin_subscriptions(request: Request, _: bool = Depends(require_auth)):

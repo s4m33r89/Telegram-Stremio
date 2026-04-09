@@ -100,15 +100,15 @@ def select_best_client(target_dc: int) -> int:
     def _score(idx: int) -> int:
         return work_loads.get(idx, 0) + 3 * client_failures.get(idx, 0)
 
-    # --- DC-aware selection (uncomment to enable) ---------------------------
-    # matching = [
-    #     idx for idx, dc in client_dc_map.items()
-    #     if dc == target_dc and idx in multi_clients
-    # ]
-    # if matching:
-    #     selected = min(matching, key=_score)
-    #     LOGGER.debug("DC-match client %s (DC %s) score=%s", selected, target_dc, _score(selected))
-    #     return selected
+    # --- DC-aware selection (Enabled) ---------------------------------------
+    matching = [
+        idx for idx, dc in client_dc_map.items()
+        if dc == target_dc and idx in multi_clients
+    ]
+    if matching:
+        selected = min(matching, key=_score)
+        LOGGER.debug("DC-match client %s (DC %s) score=%s", selected, target_dc, _score(selected))
+        return selected
     # ------------------------------------------------------------------------
 
     if multi_clients:
@@ -385,13 +385,34 @@ async def media_streamer(
 @router.get("/stream/stats")
 async def get_stream_stats():
     now = time.time()
+
     PRUNE_SECONDS = 3
+    INACTIVE_TIMEOUT = 15  # 15 sec no data = inactive
 
     for sid, info in list(ACTIVE_STREAMS.items()):
-        status = info.get("status")
-        # Check end_ts first, which is set when a stream organically finishes
-        last_ts = info.get("end_ts") or info.get("last_ts") or info.get("start_ts", now)
-        if status in ("cancelled", "error", "finished"):
+        status = info.get("status", "active")
+
+        current_bytes = info.get("total_bytes", 0)
+
+        if "last_bytes" not in info:
+            info["last_bytes"] = current_bytes
+            info["last_activity_ts"] = now
+
+        
+        if current_bytes > info["last_bytes"]:
+            # Data is flowing → update activity timestamp
+            info["last_bytes"] = current_bytes
+            info["last_activity_ts"] = now
+            info["status"] = "active"  # ensure it stays active if resumed
+        else:
+            # No data flow → check inactivity timeout
+            if now - info["last_activity_ts"] > INACTIVE_TIMEOUT:
+                if status == "active":
+                    info["status"] = "cancelled"
+                    info["end_ts"] = now
+                    
+        if info.get("status") in ("cancelled", "error", "finished", "inactive"):
+            last_ts = info.get("end_ts", info.get("last_activity_ts", now))
             if now - last_ts > PRUNE_SECONDS:
                 try:
                     RECENT_STREAMS.appendleft(ACTIVE_STREAMS.pop(sid))
