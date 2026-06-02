@@ -15,6 +15,11 @@ from Backend.pyrofork.plugins.channels import _load_channels_from_db
 from Backend.helper.subscription_checker import subscription_checker_loop
 from Backend.helper.link_checker import DeadLinkChecker
 from Backend.fastapi.main import app
+from Backend.helper.auto_catalog import (
+    start_auto_catalog_sync_background, start_auto_catalog_interval_loop,
+    AUTO_SYNC_DELAY_SECONDS, AUTO_CATALOG_ON_STARTUP,
+    AUTO_CATALOG_FULL_REBUILD_ON_STARTUP
+)
 
 
 loop = get_event_loop()
@@ -54,6 +59,15 @@ async def start_services():
         
         link_checker_task = DeadLinkChecker(db, app, check_interval_hours=24)
         loop.create_task(link_checker_task.start())
+
+        if AUTO_CATALOG_ON_STARTUP:
+            loop.create_task(start_auto_catalog_sync_background(
+                db,
+                delay_seconds=AUTO_SYNC_DELAY_SECONDS,
+                full_rebuild=AUTO_CATALOG_FULL_REBUILD_ON_STARTUP,
+            ))
+
+        loop.create_task(start_auto_catalog_interval_loop(db))
         
         if Telegram.SUBSCRIPTION:
             loop.create_task(subscription_checker_loop(StreamBot))

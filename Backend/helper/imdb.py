@@ -30,6 +30,7 @@ def extract_first_year(year_string) -> int:
 async def search_title(query: str, type: str) -> Optional[Dict[str, Any]]:
     client = await _get_client()
     cinemeta_type = "series" if type == "tvSeries" else type
+    query = ".".join(query.strip().lower().split())
     url = f"{BASE_URL}/catalog/{cinemeta_type}/imdb/search={query}.json"
     try:
         resp = await client.get(url)
