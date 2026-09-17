@@ -1,38 +1,142 @@
-from fastapi import FastAPI, Request, Form, Depends, Query
-from fastapi.responses import HTMLResponse, RedirectResponse
+import asyncio
+
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.sessions import SessionMiddleware
 from fastapi.templating import Jinja2Templates
+
 from Backend import __version__
-from Backend.fastapi.security.credentials import require_auth
-from Backend.fastapi.routes.stream_routes import router as stream_router, decay_client_failures
-from Backend.fastapi.routes.stremio_routes import router as stremio_router
-from Backend.fastapi.routes.template_routes import (
-    login_page, login_post, logout, set_theme, dashboard_page,
-    media_management_page, edit_media_page, public_status_page, stremio_guide_page,
-    admin_dashboard_page, admin_subscriptions_page, admin_access_page,
-    custom_catalogs_page
-)
+from Backend.fastapi.themes import DEFAULT_THEME, DEFAULT_STYLE, get_theme
 from Backend.fastapi.routes.api_routes import (
-    list_media_api, delete_media_api, update_media_api,
-    delete_movie_quality_api, delete_tv_quality_api,
-    delete_tv_episode_api, delete_tv_season_api,
-    create_token_api, revoke_token_api, update_token_limits_api,
-    speed_test_api, speed_test_stream_api,
-    get_admin_stats_api, clear_cache_api, get_dead_links_api,
-    get_stream_analytics_api, clear_stream_analytics_api,
-    get_subscription_plans_api, add_subscription_plan_api,
-    update_subscription_plan_api, delete_subscription_plan_api,
-    get_all_subscribers_api, manage_subscriber_api,
-    get_all_tokens_api, assign_plan_api, link_token_user_api,
-    search_media_rescan_api, apply_media_rescan_api,
-    list_custom_catalogs_api, create_custom_catalog_api, update_custom_catalog_api,
-    delete_custom_catalog_api, get_custom_catalog_items_api, search_catalog_media_api,
-    add_custom_catalog_item_api, remove_custom_catalog_item_api,
-    auto_sync_custom_catalogs_api, auto_catalog_sync_status_api,
-    get_auto_catalog_settings_api, update_auto_catalog_settings_api
+    add_custom_catalog_item_api,
+    add_subscription_plan_api,
+    apply_media_rescan_api,
+    assign_plan_api,
+    auto_catalog_sync_status_api,
+    auto_sync_custom_catalogs_api,
+    cancel_dbcheck_api,
+    cancel_duplicate_check_api,
+    cancel_scan_api,
+    clear_cache_api,
+    clear_stream_analytics_api,
+    create_custom_catalog_api,
+    create_token_api,
+    grant_lifetime_api,
+    set_token_lifetime_api,
+    set_token_expiry_api,
+    subscription_preflight_api,
+    backfill_subscriber_names_api,
+    dbcheck_status_api,
+    duplicate_check_status_api,
+    delete_custom_catalog_api,
+    delete_media_api,
+    delete_movie_quality_api,
+    delete_request_api,
+    delete_subscription_plan_api,
+    export_config_api,
+    import_config_api,
+    delete_tv_episode_api,
+    delete_tv_quality_api,
+    delete_tv_season_api,
+    download_logs_api,
+    get_admin_stats_api,
+    get_db_stats_api,
+    get_all_subscribers_api,
+    get_all_tokens_api,
+    get_auto_catalog_settings_api,
+    get_catalog_order_api,
+    update_catalog_order_api,
+    get_user_activity_api,
+    session_send_code_api,
+    session_verify_code_api,
+    session_verify_password_api,
+    session_status_api,
+    session_disconnect_api,
+    session_reconnect_api,
+    session_remove_api,
+    get_custom_catalog_items_api,
+    get_dead_links_api,
+    get_media_visibility_api,
+    get_requests_api,
+    request_popular_api,
+    request_search_api,
+    request_submit_api,
+    get_stream_analytics_api,
+    get_subscription_plans_api,
+    get_settings_api,
+    get_logs_api,
+    get_manual_session_api,
+    get_system_stats_api,
+    get_tools_channels_api,
+    bot_admin_scan_api,
+    bot_admin_apply_api,
+    bot_admin_apply_status_api,
+    clear_manual_session_api,
+    search_manual_session_api,
+    set_manual_session_api,
+    health_api,
+    health_report_api,
+    version_status_api,
+    setup_status_api,
+    link_token_user_api,
+    list_custom_catalogs_api,
+    list_media_api,
+    manage_subscriber_api,
+    manual_add_media_api,
+    list_manual_add_catalogs_api,
+    resolve_manual_metadata_api,
+    purge_dead_links_api,
+    purge_duplicates_api,
+    remove_custom_catalog_item_api,
+    resolve_telegram_api,
+    resolve_subtitle_api,
+    list_subtitle_languages_api,
+    list_subtitles_api,
+    add_subtitles_api,
+    remove_subtitle_api,
+    restart_app_api,
+    revoke_token_api,
+    scan_status_api,
+    search_catalog_media_api,
+    set_media_visibility_api,
+    search_media_rescan_api,
+    speed_test_api,
+    speed_test_stream_api,
+    start_dbcheck_api,
+    start_duplicate_check_api,
+    start_scan_api,
+    update_auto_catalog_settings_api,
+    update_custom_catalog_api,
+    update_media_api,
+    update_request_api,
+    update_settings_api,
+    update_subscription_plan_api,
+    update_token_limits_api,
 )
+from Backend.fastapi.routes.stream_routes import decay_client_failures
+from Backend.fastapi.routes.stream_routes import router as stream_router
+from Backend.fastapi.routes.stremio_routes import router as stremio_router
+from Backend.fastapi.routes.webdav_routes import router as webdav_router
+from Backend.fastapi.routes.template_routes import (
+    admin_access_page,
+    admin_dashboard_page,
+    admin_requests_page,
+    admin_subscriptions_page,
+    public_request_page,
+    custom_catalogs_page,
+    dashboard_page,
+    edit_media_page,
+    login_page,
+    login_post,
+    logout,
+    media_management_page,
+    settings_page,
+    set_theme,
+    tools_page,
+)
+from Backend.fastapi.security.credentials import require_auth
+from Backend.pyrofork.bot import work_loads_summary
 
 templates = Jinja2Templates(directory="Backend/fastapi/templates")
 
@@ -42,8 +146,7 @@ app = FastAPI(
     version=__version__
 )
 
-# --- Middleware Setup ---
-app.add_middleware(SessionMiddleware, secret_key="f6d2e3b9a0f43d9a2e6a56b2d3175cd9c05bbfe31d95ed2a7306b57cb1a8b6f0")
+#----- Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -57,16 +160,21 @@ try:
 except Exception:
     pass
 
+
 @app.on_event("startup")
 async def _startup():
-    import asyncio
     asyncio.create_task(decay_client_failures())
+    from Backend.helper.version_check import version_check_loop
+    asyncio.create_task(version_check_loop())
 
-# --- Include existing API routers ---
+
+#----- Streaming and Stremio routers
 app.include_router(stream_router)
 app.include_router(stremio_router)
+app.include_router(webdav_router)
 
-# --- Public Routes (No Authentication Required) ---
+
+#----- Public routes (no authentication)
 @app.get("/login", response_class=HTMLResponse)
 async def login_get(request: Request):
     return await login_page(request)
@@ -80,18 +188,103 @@ async def logout_route(request: Request):
     return await logout(request)
 
 @app.post("/set-theme")
-async def set_theme_route(request: Request, theme: str = Form(...)):
-    return await set_theme(request, theme)
+async def set_theme_route(request: Request, theme: str = Form(None), style: str = Form(None)):
+    return await set_theme(request, theme, style)
 
-@app.get("/status", response_class=HTMLResponse)
-async def public_status(request: Request):
-    return await public_status_page(request)
+@app.get("/manifest.webmanifest")
+async def pwa_manifest(request: Request):
+    theme_name = request.session.get("theme", DEFAULT_THEME)
+    style_name = request.session.get("style", DEFAULT_STYLE)
+    theme = get_theme(theme_name, style_name)
+    return JSONResponse(
+        {
+            "name": "Telegram Stremio",
+            "short_name": "TG Stremio",
+            "description": "Telegram Stremio media management",
+            "start_url": "/",
+            "scope": "/",
+            "display": "standalone",
+            "orientation": "any",
+            "background_color": theme["colors"]["background"],
+            "theme_color": theme["colors"]["primary"],
+            "icons": [
+                {
+                    "src": "/pwa-icon.svg",
+                    "sizes": "any",
+                    "type": "image/svg+xml",
+                    "purpose": "any"
+                },
+                {
+                    "src": "/pwa-icon.svg",
+                    "sizes": "any",
+                    "type": "image/svg+xml",
+                    "purpose": "maskable"
+                }
+            ]
+        },
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-cache"}
+    )
 
-@app.get("/stremio", response_class=HTMLResponse)
-async def stremio_guide(request: Request):
-    return await stremio_guide_page(request)
+@app.get("/pwa-icon.svg")
+async def pwa_icon(request: Request):
+    theme_name = request.session.get("theme", DEFAULT_THEME)
+    style_name = request.session.get("style", DEFAULT_STYLE)
+    theme = get_theme(theme_name, style_name)
+    primary = theme["colors"]["primary"]
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">'
+        f'<rect width="512" height="512" rx="96" fill="{primary}"/>'
+        f'<path d="M200 152l176 104-176 104z" fill="white"/>'
+        f'</svg>'
+    )
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-cache"}
+    )
 
-# --- Protected Routes (Authentication Required) ---
+@app.get("/sw.js")
+async def service_worker():
+    js = (
+        "self.addEventListener('install',e=>self.skipWaiting());"
+        "self.addEventListener('activate',e=>e.waitUntil(clients.claim()));"
+        "self.addEventListener('fetch',e=>e.respondWith(fetch(e.request).catch(()=>caches.match(e.request))));"
+    )
+    return Response(
+        content=js,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"}
+    )
+
+@app.get("/status")
+async def public_status():
+    return {"status": "ok", "version": __version__}
+
+@app.get("/open/{app_name}/{media_type}/{content_id}", response_class=HTMLResponse)
+async def open_in_app(app_name: str, media_type: str, content_id: str):
+    stremio_type = "series" if media_type in ("series", "tv") else "movie"
+    web = f"https://web.stremio.com/#/detail/{stremio_type}/{content_id}/{content_id}"
+    schemes = {
+        "nuvio": f"nuvio://meta?type={stremio_type}&id={content_id}",
+        "stremio": f"stremio:///detail/{stremio_type}/{content_id}",
+    }
+    scheme = schemes.get(app_name, schemes["stremio"])
+    label = "Nuvio" if app_name == "nuvio" else "Stremio"
+    html = f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Opening {label}…</title>
+<style>body{{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;text-align:center}}a{{color:#60a5fa}}.b{{display:inline-block;margin-top:16px;padding:12px 22px;background:#3b82f6;color:#fff;border-radius:12px;text-decoration:none;font-weight:700}}</style>
+</head><body><div><h2>Opening in {label}…</h2>
+<p>If nothing happens, use the buttons below.</p>
+<a class="b" href="{scheme}">Open {label}</a><br>
+<a class="b" style="background:#334155" href="{web}">Open Stremio Web</a></div>
+<script>setTimeout(function(){{window.location.href="{scheme}";}},200);</script>
+</body></html>"""
+    return HTMLResponse(html)
+
+
+#----- Protected routes (authentication required)
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request, _: bool = Depends(require_auth)):
     return await dashboard_page(request, _)
@@ -101,9 +294,8 @@ async def admin_dashboard(request: Request, _: bool = Depends(require_auth)):
     return await admin_dashboard_page(request, _)
 
 @app.get("/media/manage", response_class=HTMLResponse)
-async def media_management(request: Request, media_type: str = "movie", _: bool = Depends(require_auth)):
-    return await media_management_page(request, media_type, _)
-
+async def media_management(request: Request, media_type: str = "movie", custom: bool = False, _: bool = Depends(require_auth)):
+    return await media_management_page(request, media_type, custom, _)
 
 @app.get("/catalogs", response_class=HTMLResponse)
 async def custom_catalogs(request: Request, _: bool = Depends(require_auth)):
@@ -119,9 +311,10 @@ async def list_media(
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
     search: str = Query("", max_length=100),
+    custom: bool = Query(False),
     _: bool = Depends(require_auth)
 ):
-    return await list_media_api(media_type, page, page_size, search)
+    return await list_media_api(media_type, page, page_size, search, custom)
 
 @app.delete("/api/media/delete")
 async def delete_media(tmdb_id: int, db_index: int, media_type: str, _: bool = Depends(require_auth)):
@@ -150,16 +343,8 @@ async def delete_tv_season(tmdb_id: int, db_index: int, season: int, _: bool = D
 @app.get("/api/system/workloads")
 async def get_workloads(_: bool = Depends(require_auth)):
     try:
-        from Backend.pyrofork.bot import work_loads
-        return {
-            "loads": {
-                f"bot{c + 1}": l
-                for c, (_, l) in enumerate(
-                    sorted(work_loads.items(), key=lambda x: x[1], reverse=True)
-                )
-            } if work_loads else {}
-        }
-    except Exception as e:
+        return {"loads": work_loads_summary()}
+    except Exception:
         return {"loads": {}}
 
 @app.post("/api/tokens")
@@ -176,7 +361,6 @@ async def revoke_token(token: str, _: bool = Depends(require_auth)):
 
 @app.get("/api/system/stats")
 async def get_system_stats(_: bool = Depends(require_auth)):
-    from Backend.fastapi.routes.api_routes import get_system_stats_api
     return await get_system_stats_api()
 
 @app.get("/api/admin/system-stats")
@@ -194,6 +378,10 @@ async def get_dead_links(_: bool = Depends(require_auth)):
 @app.get("/api/admin/stream-analytics")
 async def get_stream_analytics(_: bool = Depends(require_auth)):
     return await get_stream_analytics_api()
+
+@app.get("/api/admin/user-activity")
+async def get_user_activity(page: int = 1, per_page: int = 5, _: bool = Depends(require_auth)):
+    return await get_user_activity_api(page, per_page)
 
 @app.post("/api/admin/clear-analytics")
 async def clear_analytics(_: bool = Depends(require_auth)):
@@ -227,7 +415,8 @@ async def get_subscribers(_: bool = Depends(require_auth)):
 async def manage_subscriber(user_id: int, payload: dict, _: bool = Depends(require_auth)):
     return await manage_subscriber_api(user_id, payload)
 
-# --- Access Management ---
+
+#----- Access management
 @app.get("/admin/access", response_class=HTMLResponse)
 async def admin_access(request: Request, _: bool = Depends(require_auth)):
     return await admin_access_page(request, _)
@@ -238,8 +427,7 @@ async def get_access_tokens(_: bool = Depends(require_auth)):
 
 @app.delete("/api/admin/access/tokens/{token}")
 async def delete_access_token(token: str, _: bool = Depends(require_auth)):
-    from Backend.fastapi.routes.api_routes import revoke_token_api as _revoke_token_api
-    return await _revoke_token_api(token)
+    return await revoke_token_api(token)
 
 @app.post("/api/admin/access/users/{user_id}/assign-plan")
 async def assign_access_plan(user_id: int, payload: dict, _: bool = Depends(require_auth)):
@@ -250,9 +438,65 @@ async def assign_access_plan(user_id: int, payload: dict, _: bool = Depends(requ
 async def link_token_to_user(token: str, payload: dict, _: bool = Depends(require_auth)):
     user_id = int(payload.get("user_id", 0))
     if not user_id:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="user_id is required.")
     return await link_token_user_api(token, user_id)
+
+@app.patch("/api/admin/access/tokens/{token}/lifetime")
+async def set_token_lifetime(token: str, payload: dict, _: bool = Depends(require_auth)):
+    return await set_token_lifetime_api(token, payload)
+
+@app.post("/api/admin/access/tokens/{token}/expiry")
+async def set_token_expiry(token: str, payload: dict, _: bool = Depends(require_auth)):
+    return await set_token_expiry_api(token, payload)
+
+@app.post("/api/admin/access/grant-lifetime")
+async def grant_lifetime(_: bool = Depends(require_auth)):
+    return await grant_lifetime_api()
+
+@app.get("/api/admin/subscriptions/preflight")
+async def subscription_preflight(_: bool = Depends(require_auth)):
+    return await subscription_preflight_api()
+
+@app.post("/api/admin/subscriptions/backfill-names")
+async def backfill_subscriber_names(_: bool = Depends(require_auth)):
+    return await backfill_subscriber_names_api()
+
+
+#----- Public content request page (no auth)
+@app.get("/request", response_class=HTMLResponse)
+async def public_request(request: Request):
+    return await public_request_page(request)
+
+@app.get("/api/request/search")
+async def request_search(q: str = Query("")):
+    return await request_search_api(q)
+
+@app.get("/api/request/popular")
+async def request_popular():
+    return await request_popular_api()
+
+@app.post("/api/request/submit")
+async def request_submit(payload: dict, request: Request):
+    client_ip = request.client.host if request.client else None
+    return await request_submit_api(payload, client_ip)
+
+
+#----- Admin content requests
+@app.get("/admin/requests", response_class=HTMLResponse)
+async def admin_requests(request: Request, _: bool = Depends(require_auth)):
+    return await admin_requests_page(request, _)
+
+@app.get("/api/admin/requests")
+async def get_requests(_: bool = Depends(require_auth)):
+    return await get_requests_api()
+
+@app.patch("/api/admin/requests/{request_id}")
+async def update_request(request_id: str, payload: dict, _: bool = Depends(require_auth)):
+    return await update_request_api(request_id, payload)
+
+@app.delete("/api/admin/requests/{request_id}")
+async def delete_request_route(request_id: str, _: bool = Depends(require_auth)):
+    return await delete_request_api(request_id)
 
 @app.get("/api/system/speedtest")
 async def speed_test(
@@ -274,7 +518,6 @@ async def speed_test_stream(
 ):
     return await speed_test_stream_api(quality_id, tmdb_id, db_index, media_type)
 
-
 @app.get("/api/media/rescan/search")
 async def search_media_rescan(
     media_type: str,
@@ -283,7 +526,6 @@ async def search_media_rescan(
     _: bool = Depends(require_auth)
 ):
     return await search_media_rescan_api(media_type, query, year)
-
 
 @app.post("/api/media/rescan/apply")
 async def apply_media_rescan(
@@ -296,7 +538,47 @@ async def apply_media_rescan(
     return await apply_media_rescan_api(request, tmdb_id, db_index, media_type)
 
 
-# --- Custom Catalog Management ---
+#----- Manual add (custom movie/tv/season/episode/stream)
+@app.post("/api/media/resolve-telegram")
+async def resolve_telegram(payload: dict, _: bool = Depends(require_auth)):
+    return await resolve_telegram_api(payload)
+
+@app.post("/api/media/manual-add")
+async def manual_add_media(payload: dict, _: bool = Depends(require_auth)):
+    return await manual_add_media_api(payload)
+
+@app.get("/api/media/manual-add/catalogs")
+async def manual_add_catalogs(_: bool = Depends(require_auth)):
+    return await list_manual_add_catalogs_api()
+
+@app.get("/api/media/manual-add/resolve-meta")
+async def manual_add_resolve_meta(media_type: str, selected_id: str, _: bool = Depends(require_auth)):
+    return await resolve_manual_metadata_api(media_type, selected_id)
+
+
+#----- Manual subtitle management
+@app.get("/api/media/subtitles/languages")
+async def subtitle_languages(_: bool = Depends(require_auth)):
+    return list_subtitle_languages_api()
+
+@app.get("/api/media/subtitles")
+async def list_subtitles(media_type: str, tmdb_id: int, db_index: int, _: bool = Depends(require_auth)):
+    return await list_subtitles_api(media_type, tmdb_id, db_index)
+
+@app.post("/api/media/subtitles/resolve")
+async def resolve_subtitle(payload: dict, _: bool = Depends(require_auth)):
+    return await resolve_subtitle_api(payload)
+
+@app.post("/api/media/subtitles/add")
+async def add_subtitles(payload: dict, _: bool = Depends(require_auth)):
+    return await add_subtitles_api(payload)
+
+@app.post("/api/media/subtitles/remove")
+async def remove_subtitle_route(payload: dict, _: bool = Depends(require_auth)):
+    return await remove_subtitle_api(payload)
+
+
+#----- Custom catalog management
 @app.get("/api/custom-catalogs")
 async def list_custom_catalogs(
     tmdb_id: int | None = None,
@@ -318,6 +600,19 @@ async def update_custom_catalog(catalog_id: str, payload: dict, _: bool = Depend
 async def delete_custom_catalog(catalog_id: str, _: bool = Depends(require_auth)):
     return await delete_custom_catalog_api(catalog_id)
 
+@app.post("/api/custom-catalogs/media-visibility")
+async def set_media_visibility(payload: dict, _: bool = Depends(require_auth)):
+    return await set_media_visibility_api(payload)
+
+@app.get("/api/custom-catalogs/media-visibility")
+async def get_media_visibility(
+    tmdb_id: int,
+    db_index: int,
+    media_type: str = Query("movie", regex="^(movie|tv|series)$"),
+    _: bool = Depends(require_auth)
+):
+    return await get_media_visibility_api(tmdb_id, db_index, media_type)
+
 @app.get("/api/custom-catalogs/search-media")
 async def search_catalog_media(
     query: str,
@@ -328,17 +623,24 @@ async def search_catalog_media(
 ):
     return await search_catalog_media_api(query, media_type, page, page_size)
 
-
 @app.post("/api/custom-catalogs/auto-sync")
 async def auto_sync_custom_catalogs(
-    full_rebuild: bool = Query(False),
+    force_refresh: bool = Query(False),
     _: bool = Depends(require_auth)
 ):
-    return await auto_sync_custom_catalogs_api(full_rebuild)
+    return await auto_sync_custom_catalogs_api(force_refresh)
 
 @app.get("/api/custom-catalogs/auto-sync/status")
 async def auto_catalog_sync_status(_: bool = Depends(require_auth)):
     return await auto_catalog_sync_status_api()
+
+@app.get("/api/custom-catalogs-order")
+async def get_catalog_order_route(_: bool = Depends(require_auth)):
+    return await get_catalog_order_api()
+
+@app.put("/api/custom-catalogs-order")
+async def update_catalog_order_route(payload: dict, _: bool = Depends(require_auth)):
+    return await update_catalog_order_api(payload)
 
 @app.get("/api/custom-catalogs/auto-sync/settings")
 async def get_auto_catalog_settings_route(_: bool = Depends(require_auth)):
@@ -372,6 +674,190 @@ async def remove_custom_catalog_item(
 ):
     return await remove_custom_catalog_item_api(catalog_id, tmdb_id, db_index, media_type)
 
+
+#----- Settings
+@app.get("/admin/settings", response_class=HTMLResponse)
+async def admin_settings(request: Request, _: bool = Depends(require_auth)):
+    return await settings_page(request, _)
+
+@app.get("/api/admin/settings")
+async def get_settings(_: bool = Depends(require_auth)):
+    return await get_settings_api()
+
+@app.put("/api/admin/settings")
+async def update_settings(payload: dict, _: bool = Depends(require_auth)):
+    return await update_settings_api(payload)
+
+
+#----- Telegram user session login (replaces manual USER_SESSION_STRING)
+@app.get("/api/admin/settings/session")
+async def session_status(_: bool = Depends(require_auth)):
+    return await session_status_api()
+
+@app.post("/api/admin/settings/session/send-code")
+async def session_send_code(payload: dict, _: bool = Depends(require_auth)):
+    return await session_send_code_api(payload)
+
+@app.post("/api/admin/settings/session/verify-code")
+async def session_verify_code(payload: dict, _: bool = Depends(require_auth)):
+    return await session_verify_code_api(payload)
+
+@app.post("/api/admin/settings/session/verify-password")
+async def session_verify_password(payload: dict, _: bool = Depends(require_auth)):
+    return await session_verify_password_api(payload)
+
+@app.post("/api/admin/settings/session/disconnect")
+async def session_disconnect(_: bool = Depends(require_auth)):
+    return await session_disconnect_api()
+
+@app.post("/api/admin/settings/session/reconnect")
+async def session_reconnect(_: bool = Depends(require_auth)):
+    return await session_reconnect_api()
+
+@app.delete("/api/admin/settings/session")
+async def session_remove(_: bool = Depends(require_auth)):
+    return await session_remove_api()
+
+
+#----- System & Maintenance (WebUI replacement for /stats, /log, /restart bot commands)
+@app.get("/api/admin/stats")
+async def admin_db_stats(_: bool = Depends(require_auth)):
+    return await get_db_stats_api()
+
+@app.get("/api/admin/health")
+async def admin_health(_: bool = Depends(require_auth)):
+    return await health_api()
+
+@app.get("/api/admin/health/report")
+async def admin_health_report(fresh: bool = Query(False), _: bool = Depends(require_auth)):
+    return await health_report_api(force=fresh)
+
+@app.get("/api/admin/version")
+async def admin_version(force: bool = Query(False), _: bool = Depends(require_auth)):
+    return await version_status_api(force=force)
+
+@app.get("/api/admin/setup-status")
+async def admin_setup_status(_: bool = Depends(require_auth)):
+    return await setup_status_api()
+
+@app.get("/api/admin/backup/export")
+async def admin_backup_export(_: bool = Depends(require_auth)):
+    from fastapi.responses import JSONResponse
+    data = await export_config_api()
+    return JSONResponse(
+        content=data,
+        headers={"Content-Disposition": 'attachment; filename="telegram-stremio-backup.json"'},
+    )
+
+@app.post("/api/admin/backup/import")
+async def admin_backup_import(payload: dict, _: bool = Depends(require_auth)):
+    return await import_config_api(payload)
+
+@app.get("/api/admin/logs")
+async def admin_logs(lines: int = Query(300, ge=1, le=2000), _: bool = Depends(require_auth)):
+    return await get_logs_api(lines)
+
+@app.get("/api/admin/logs/download")
+async def admin_logs_download(_: bool = Depends(require_auth)):
+    return await download_logs_api()
+
+@app.post("/api/admin/restart")
+async def admin_restart(_: bool = Depends(require_auth)):
+    return await restart_app_api()
+
+
+#----- Tools (WebUI replacement for /scan, /rescan, /dbcheck bot commands)
+@app.get("/admin/tools", response_class=HTMLResponse)
+async def admin_tools(request: Request, _: bool = Depends(require_auth)):
+    return await tools_page(request, _)
+
+@app.get("/api/admin/tools/channels")
+async def tools_channels(_: bool = Depends(require_auth)):
+    return await get_tools_channels_api()
+
+@app.get("/api/admin/tools/bot-admin/scan")
+async def tools_bot_admin_scan(_: bool = Depends(require_auth)):
+    return await bot_admin_scan_api()
+
+@app.post("/api/admin/tools/bot-admin/apply")
+async def tools_bot_admin_apply(payload: dict, _: bool = Depends(require_auth)):
+    return await bot_admin_apply_api(payload)
+
+@app.get("/api/admin/tools/bot-admin/apply/status")
+async def tools_bot_admin_apply_status(_: bool = Depends(require_auth)):
+    return await bot_admin_apply_status_api()
+
+@app.get("/api/admin/tools/manual-session")
+async def tools_manual_session_get(_: bool = Depends(require_auth)):
+    return await get_manual_session_api()
+
+@app.get("/api/admin/tools/manual-session/search")
+async def tools_manual_session_search(query: str = Query(""), _: bool = Depends(require_auth)):
+    return await search_manual_session_api(query)
+
+@app.post("/api/admin/tools/manual-session")
+async def tools_manual_session_set(payload: dict, _: bool = Depends(require_auth)):
+    return await set_manual_session_api(payload)
+
+@app.delete("/api/admin/tools/manual-session")
+async def tools_manual_session_clear(_: bool = Depends(require_auth)):
+    return await clear_manual_session_api()
+
+@app.post("/api/admin/tools/scan/start")
+async def tools_scan_start(payload: dict, _: bool = Depends(require_auth)):
+    return await start_scan_api(payload)
+
+@app.post("/api/admin/tools/scan/cancel")
+async def tools_scan_cancel(_: bool = Depends(require_auth)):
+    return await cancel_scan_api()
+
+@app.get("/api/admin/tools/scan/status")
+async def tools_scan_status(_: bool = Depends(require_auth)):
+    return await scan_status_api()
+
+@app.post("/api/admin/tools/dbcheck/start")
+async def tools_dbcheck_start(_: bool = Depends(require_auth)):
+    return await start_dbcheck_api()
+
+@app.post("/api/admin/tools/dbcheck/cancel")
+async def tools_dbcheck_cancel(_: bool = Depends(require_auth)):
+    return await cancel_dbcheck_api()
+
+@app.get("/api/admin/tools/dbcheck/status")
+async def tools_dbcheck_status(_: bool = Depends(require_auth)):
+    return await dbcheck_status_api()
+
+@app.post("/api/admin/tools/dead-links/purge")
+async def tools_purge_dead_links(payload: dict | None = None, _: bool = Depends(require_auth)):
+    return await purge_dead_links_api(payload)
+
+@app.post("/api/admin/tools/duplicates/start")
+async def tools_duplicates_start(_: bool = Depends(require_auth)):
+    return await start_duplicate_check_api()
+
+@app.post("/api/admin/tools/duplicates/cancel")
+async def tools_duplicates_cancel(_: bool = Depends(require_auth)):
+    return await cancel_duplicate_check_api()
+
+@app.get("/api/admin/tools/duplicates/status")
+async def tools_duplicates_status(_: bool = Depends(require_auth)):
+    return await duplicate_check_status_api()
+
+@app.post("/api/admin/tools/duplicates/purge")
+async def tools_duplicates_purge(payload: dict | None = None, _: bool = Depends(require_auth)):
+    return await purge_duplicates_api(payload)
+
+
 @app.exception_handler(401)
 async def auth_exception_handler(request: Request, exc):
+    # API / stream / WebDAV clients must receive a real 401, not an HTML login redirect.
+    path = request.url.path or ""
+    if path.startswith(("/webdav", "/dl/", "/sub/", "/stremio/", "/api/", "/thumb/")):
+        from fastapi.responses import JSONResponse
+        detail = getattr(exc, "detail", "Unauthorized")
+        headers = {}
+        # Preserve WWW-Authenticate for WebDAV Basic auth prompts
+        if hasattr(exc, "headers") and exc.headers:
+            headers.update(exc.headers)
+        return JSONResponse(status_code=401, content={"detail": detail}, headers=headers)
     return RedirectResponse(url="/login", status_code=302)
